@@ -10,6 +10,7 @@ import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -27,8 +28,9 @@ public class Nst1610AuditService implements AuditService {
     private final Path storageFile;
     private final List<AuditEvent> events;
     private final AtomicBoolean running = new AtomicBoolean(false);
-    private KafkaConsumer<String, String> consumer;
-    private Thread consumerThread;
+    private final Object runtimeStateLock = new Object();
+    private Optional<KafkaConsumer<String, String>> consumer = Optional.empty();
+    private Optional<Thread> consumerThread = Optional.empty();
 
     public Nst1610AuditService(String bootstrapServers, String consumerGroupId) throws IOException {
         this.bootstrapServers = bootstrapServers;
@@ -151,25 +153,35 @@ public class Nst1610AuditService implements AuditService {
         return storedEvents;
     }
 
-    private synchronized KafkaConsumer<String, String> currentConsumer() {
-        return consumer;
+    private KafkaConsumer<String, String> currentConsumer() {
+        synchronized (runtimeStateLock) {
+            return consumer.orElse(null);
+        }
     }
 
-    private synchronized Thread currentConsumerThread() {
-        return consumerThread;
+    private Thread currentConsumerThread() {
+        synchronized (runtimeStateLock) {
+            return consumerThread.orElse(null);
+        }
     }
 
-    private synchronized void setConsumer(KafkaConsumer<String, String> kafkaConsumer) {
-        consumer = kafkaConsumer;
+    private void setConsumer(KafkaConsumer<String, String> kafkaConsumer) {
+        synchronized (runtimeStateLock) {
+            consumer = Optional.of(kafkaConsumer);
+        }
     }
 
-    private synchronized void setConsumerThread(Thread thread) {
-        consumerThread = thread;
+    private void setConsumerThread(Thread thread) {
+        synchronized (runtimeStateLock) {
+            consumerThread = Optional.of(thread);
+        }
     }
 
-    private synchronized void clearRuntimeState() {
-        consumer = null;
-        consumerThread = null;
+    private void clearRuntimeState() {
+        synchronized (runtimeStateLock) {
+            consumer = Optional.empty();
+            consumerThread = Optional.empty();
+        }
     }
 
     private static String sanitize(String value) {

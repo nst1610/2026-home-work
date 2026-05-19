@@ -14,6 +14,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,9 +28,10 @@ public class Nst1610KVService implements AuditableKVService, ReplicatedService {
     private final HashingStrategy strategy;
     private final ClusterProxy clusterProxy;
     private final ReplicatedFileStorage replicatedStorage;
+    private final Object auditPublisherLock = new Object();
     private String bootstrapServers;
     private boolean asyncMode = true;
-    private KafkaAuditPublisher auditPublisher;
+    private Optional<KafkaAuditPublisher> auditPublisher = Optional.empty();
 
     public Nst1610KVService(int port) throws IOException {
         this(port, List.of(getEndpoint(port)), getEndpoint(port), resolveReplicationFactor());
@@ -122,23 +124,35 @@ public class Nst1610KVService implements AuditableKVService, ReplicatedService {
     @Override
     public void setAsync(boolean enabled) {
         this.asyncMode = enabled;
-        if (auditPublisher != null) {
-            auditPublisher.setAsyncMode(enabled);
+        KafkaAuditPublisher publisher = currentPublisher();
+        if (publisher != null) {
+            publisher.setAsyncMode(enabled);
         }
     }
 
-    private synchronized KafkaAuditPublisher publisher() {
-        if (auditPublisher == null) {
-            auditPublisher = new KafkaAuditPublisher(bootstrapServers);
-            auditPublisher.setAsyncMode(asyncMode);
+    private KafkaAuditPublisher publisher() {
+        synchronized (auditPublisherLock) {
+            if (auditPublisher.isEmpty()) {
+                KafkaAuditPublisher createdPublisher = new KafkaAuditPublisher(bootstrapServers);
+                createdPublisher.setAsyncMode(asyncMode);
+                auditPublisher = Optional.of(createdPublisher);
+            }
+            return auditPublisher.orElseThrow();
         }
-        return auditPublisher;
     }
 
-    private synchronized KafkaAuditPublisher detachPublisher() {
-        KafkaAuditPublisher publisher = auditPublisher;
-        auditPublisher = null;
-        return publisher;
+    private KafkaAuditPublisher currentPublisher() {
+        synchronized (auditPublisherLock) {
+            return auditPublisher.orElse(null);
+        }
+    }
+
+    private KafkaAuditPublisher detachPublisher() {
+        synchronized (auditPublisherLock) {
+            KafkaAuditPublisher publisher = auditPublisher.orElse(null);
+            auditPublisher = Optional.empty();
+            return publisher;
+        }
     }
 
     private static int resolveReplicationFactor() {

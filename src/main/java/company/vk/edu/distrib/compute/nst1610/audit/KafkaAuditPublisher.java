@@ -1,6 +1,7 @@
 package company.vk.edu.distrib.compute.nst1610.audit;
 
 import company.vk.edu.distrib.compute.AuditEvent;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.locks.Lock;
@@ -17,15 +18,18 @@ public class KafkaAuditPublisher implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(KafkaAuditPublisher.class);
     private final String bootstrapServers;
     private final Lock producerLock = new ReentrantLock();
+    private final Object asyncModeLock = new Object();
     private boolean asyncMode = true;
-    private KafkaProducer<String, String> producer;
+    private Optional<KafkaProducer<String, String>> producerRef = Optional.empty();
 
     public KafkaAuditPublisher(String bootstrapServers) {
         this.bootstrapServers = bootstrapServers;
     }
 
-    public synchronized void setAsyncMode(boolean asyncMode) {
-        this.asyncMode = asyncMode;
+    public void setAsyncMode(boolean asyncMode) {
+        synchronized (asyncModeLock) {
+            this.asyncMode = asyncMode;
+        }
     }
 
     public void publish(AuditEvent event) {
@@ -61,8 +65,8 @@ public class KafkaAuditPublisher implements AutoCloseable {
         KafkaProducer<String, String> localProducer;
         producerLock.lock();
         try {
-            localProducer = producer;
-            producer = null;
+            localProducer = producerRef.orElse(null);
+            producerRef = Optional.empty();
         } finally {
             producerLock.unlock();
         }
@@ -75,17 +79,19 @@ public class KafkaAuditPublisher implements AutoCloseable {
     private KafkaProducer<String, String> producer() {
         producerLock.lock();
         try {
-            if (producer == null) {
-                producer = new KafkaProducer<>(producerProperties());
+            if (producerRef.isEmpty()) {
+                producerRef = Optional.of(new KafkaProducer<>(producerProperties()));
             }
-            return producer;
+            return producerRef.orElseThrow();
         } finally {
             producerLock.unlock();
         }
     }
 
-    private synchronized boolean isAsyncMode() {
-        return asyncMode;
+    private boolean isAsyncMode() {
+        synchronized (asyncModeLock) {
+            return asyncMode;
+        }
     }
 
     private Properties producerProperties() {
