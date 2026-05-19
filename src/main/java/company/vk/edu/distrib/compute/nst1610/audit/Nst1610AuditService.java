@@ -14,6 +14,8 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -28,7 +30,7 @@ public class Nst1610AuditService implements AuditService {
     private final Path storageFile;
     private final List<AuditEvent> events;
     private final AtomicBoolean running = new AtomicBoolean(false);
-    private final Object runtimeStateLock = new Object();
+    private final Lock runtimeStateLock = new ReentrantLock();
     private Optional<KafkaConsumer<String, String>> consumer = Optional.empty();
     private Optional<Thread> consumerThread = Optional.empty();
 
@@ -132,7 +134,7 @@ public class Nst1610AuditService implements AuditService {
     private static Path createStorageFile(String consumerGroupId) throws IOException {
         Path directory = Path.of("storage", "audit");
         Files.createDirectories(directory);
-        String fileName = sanitize(consumerGroupId) + ".log";
+        String fileName = consumerGroupId + ".log";
         Path file = directory.resolve(fileName);
         if (!Files.exists(file)) {
             Files.createFile(file);
@@ -154,37 +156,48 @@ public class Nst1610AuditService implements AuditService {
     }
 
     private KafkaConsumer<String, String> currentConsumer() {
-        synchronized (runtimeStateLock) {
+        runtimeStateLock.lock();
+        try {
             return consumer.orElse(null);
+        } finally {
+            runtimeStateLock.unlock();
         }
     }
 
     private Thread currentConsumerThread() {
-        synchronized (runtimeStateLock) {
+        runtimeStateLock.lock();
+        try {
             return consumerThread.orElse(null);
+        } finally {
+            runtimeStateLock.unlock();
         }
     }
 
     private void setConsumer(KafkaConsumer<String, String> kafkaConsumer) {
-        synchronized (runtimeStateLock) {
+        runtimeStateLock.lock();
+        try {
             consumer = Optional.of(kafkaConsumer);
+        } finally {
+            runtimeStateLock.unlock();
         }
     }
 
     private void setConsumerThread(Thread thread) {
-        synchronized (runtimeStateLock) {
+        runtimeStateLock.lock();
+        try {
             consumerThread = Optional.of(thread);
+        } finally {
+            runtimeStateLock.unlock();
         }
     }
 
     private void clearRuntimeState() {
-        synchronized (runtimeStateLock) {
+        runtimeStateLock.lock();
+        try {
             consumer = Optional.empty();
             consumerThread = Optional.empty();
+        } finally {
+            runtimeStateLock.unlock();
         }
-    }
-
-    private static String sanitize(String value) {
-        return value.replaceAll("[^a-zA-Z0-9._-]", "_");
     }
 }
