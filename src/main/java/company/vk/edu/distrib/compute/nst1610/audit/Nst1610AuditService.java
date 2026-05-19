@@ -19,19 +19,16 @@ import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.serialization.StringDeserializer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class Nst1610AuditService implements AuditService {
-    private static final Logger log = LoggerFactory.getLogger(Nst1610AuditService.class);
     private static final Duration POLL_TIMEOUT = Duration.ofMillis(200);
     private final String bootstrapServers;
     private final String consumerGroupId;
     private final Path storageFile;
-    private final CopyOnWriteArrayList<AuditEvent> events;
+    private final List<AuditEvent> events;
     private final AtomicBoolean running = new AtomicBoolean(false);
-    private volatile KafkaConsumer<String, String> consumer;
-    private volatile Thread consumerThread;
+    private KafkaConsumer<String, String> consumer;
+    private Thread consumerThread;
 
     public Nst1610AuditService(String bootstrapServers, String consumerGroupId) throws IOException {
         this.bootstrapServers = bootstrapServers;
@@ -47,10 +44,10 @@ public class Nst1610AuditService implements AuditService {
         }
         KafkaConsumer<String, String> kafkaConsumer = new KafkaConsumer<>(consumerProperties());
         kafkaConsumer.subscribe(List.of(KafkaAuditPublisher.AUDIT_TOPIC));
-        consumer = kafkaConsumer;
+        setConsumer(kafkaConsumer);
         Thread thread = new Thread(() -> consume(kafkaConsumer), "nst1610-audit-" + consumerGroupId);
         thread.setDaemon(true);
-        consumerThread = thread;
+        setConsumerThread(thread);
         thread.start();
     }
 
@@ -59,11 +56,11 @@ public class Nst1610AuditService implements AuditService {
         if (!running.compareAndSet(true, false)) {
             return;
         }
-        KafkaConsumer<String, String> kafkaConsumer = consumer;
+        KafkaConsumer<String, String> kafkaConsumer = currentConsumer();
         if (kafkaConsumer != null) {
             kafkaConsumer.wakeup();
         }
-        Thread thread = consumerThread;
+        Thread thread = currentConsumerThread();
         if (thread != null) {
             try {
                 thread.join();
@@ -72,8 +69,7 @@ public class Nst1610AuditService implements AuditService {
                 throw new IllegalStateException("Interrupted while stopping audit service", e);
             }
         }
-        consumer = null;
-        consumerThread = null;
+        clearRuntimeState();
     }
 
     @Override
@@ -82,7 +78,7 @@ public class Nst1610AuditService implements AuditService {
     }
 
     private void consume(KafkaConsumer<String, String> kafkaConsumer) {
-        try {
+        try (kafkaConsumer) {
             while (running.get()) {
                 ConsumerRecords<String, String> records = kafkaConsumer.poll(POLL_TIMEOUT);
                 if (records.isEmpty()) {
@@ -95,8 +91,6 @@ public class Nst1610AuditService implements AuditService {
             if (running.get()) {
                 throw e;
             }
-        } finally {
-            kafkaConsumer.close();
         }
     }
 
@@ -136,7 +130,7 @@ public class Nst1610AuditService implements AuditService {
     private static Path createStorageFile(String consumerGroupId) throws IOException {
         Path directory = Path.of("storage", "audit");
         Files.createDirectories(directory);
-        String fileName = consumerGroupId + ".log";
+        String fileName = sanitize(consumerGroupId) + ".log";
         Path file = directory.resolve(fileName);
         if (!Files.exists(file)) {
             Files.createFile(file);
@@ -155,5 +149,30 @@ public class Nst1610AuditService implements AuditService {
             }
         }
         return storedEvents;
+    }
+
+    private synchronized KafkaConsumer<String, String> currentConsumer() {
+        return consumer;
+    }
+
+    private synchronized Thread currentConsumerThread() {
+        return consumerThread;
+    }
+
+    private synchronized void setConsumer(KafkaConsumer<String, String> kafkaConsumer) {
+        consumer = kafkaConsumer;
+    }
+
+    private synchronized void setConsumerThread(Thread thread) {
+        consumerThread = thread;
+    }
+
+    private synchronized void clearRuntimeState() {
+        consumer = null;
+        consumerThread = null;
+    }
+
+    private static String sanitize(String value) {
+        return value.replaceAll("[^a-zA-Z0-9._-]", "_");
     }
 }

@@ -3,6 +3,8 @@ package company.vk.edu.distrib.compute.nst1610.audit;
 import company.vk.edu.distrib.compute.AuditEvent;
 import java.util.Properties;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -12,18 +14,17 @@ import org.slf4j.LoggerFactory;
 
 public class KafkaAuditPublisher implements AutoCloseable {
     public static final String AUDIT_TOPIC = "audit";
-
     private static final Logger log = LoggerFactory.getLogger(KafkaAuditPublisher.class);
-
     private final String bootstrapServers;
-    private volatile boolean asyncMode = true;
-    private volatile KafkaProducer<String, String> producer;
+    private final Lock producerLock = new ReentrantLock();
+    private boolean asyncMode = true;
+    private KafkaProducer<String, String> producer;
 
     public KafkaAuditPublisher(String bootstrapServers) {
         this.bootstrapServers = bootstrapServers;
     }
 
-    public void setAsyncMode(boolean asyncMode) {
+    public synchronized void setAsyncMode(boolean asyncMode) {
         this.asyncMode = asyncMode;
     }
 
@@ -37,7 +38,7 @@ public class KafkaAuditPublisher implements AutoCloseable {
             AuditEventUtils.encode(event)
         );
         KafkaProducer<String, String> localProducer = producer();
-        if (asyncMode) {
+        if (isAsyncMode()) {
             localProducer.send(record, (metadata, exception) -> {
                 if (exception != null) {
                     log.error("Failed to publish audit event", exception);
@@ -57,8 +58,14 @@ public class KafkaAuditPublisher implements AutoCloseable {
 
     @Override
     public void close() {
-        KafkaProducer<String, String> localProducer = producer;
-        producer = null;
+        KafkaProducer<String, String> localProducer;
+        producerLock.lock();
+        try {
+            localProducer = producer;
+            producer = null;
+        } finally {
+            producerLock.unlock();
+        }
         if (localProducer != null) {
             localProducer.flush();
             localProducer.close();
@@ -66,16 +73,19 @@ public class KafkaAuditPublisher implements AutoCloseable {
     }
 
     private KafkaProducer<String, String> producer() {
-        KafkaProducer<String, String> currentProducer = producer;
-        if (currentProducer != null) {
-            return currentProducer;
-        }
-        synchronized (this) {
+        producerLock.lock();
+        try {
             if (producer == null) {
                 producer = new KafkaProducer<>(producerProperties());
             }
             return producer;
+        } finally {
+            producerLock.unlock();
         }
+    }
+
+    private synchronized boolean isAsyncMode() {
+        return asyncMode;
     }
 
     private Properties producerProperties() {

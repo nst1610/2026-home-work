@@ -21,16 +21,14 @@ public class Nst1610KVService implements AuditableKVService, ReplicatedService {
     private static final Logger log = LoggerFactory.getLogger(Nst1610KVService.class);
     private static final int DEFAULT_REPLICATION_FACTOR = 9;
     private static final String REPLICATION_FACTOR_ENV = "NST1610_REPLICATION_FACTOR";
-
     private final int servicePort;
     private final HttpServer server;
     private final String localEndpoint;
     private final HashingStrategy strategy;
     private final ClusterProxy clusterProxy;
     private final ReplicatedFileStorage replicatedStorage;
-
-    private volatile String bootstrapServers;
-    private volatile boolean asyncMode = true;
+    private String bootstrapServers;
+    private boolean asyncMode = true;
     private KafkaAuditPublisher auditPublisher;
 
     public Nst1610KVService(int port) throws IOException {
@@ -78,8 +76,7 @@ public class Nst1610KVService implements AuditableKVService, ReplicatedService {
     public void stop() {
         log.info("Server stop");
         server.stop(0);
-        KafkaAuditPublisher publisher = auditPublisher;
-        auditPublisher = null;
+        KafkaAuditPublisher publisher = detachPublisher();
         if (publisher != null) {
             publisher.close();
         }
@@ -116,8 +113,7 @@ public class Nst1610KVService implements AuditableKVService, ReplicatedService {
     @Override
     public void setBootstrapServers(String bootstrapServers) {
         this.bootstrapServers = bootstrapServers;
-        KafkaAuditPublisher publisher = auditPublisher;
-        auditPublisher = null;
+        KafkaAuditPublisher publisher = detachPublisher();
         if (publisher != null) {
             publisher.close();
         }
@@ -137,6 +133,12 @@ public class Nst1610KVService implements AuditableKVService, ReplicatedService {
             auditPublisher.setAsyncMode(asyncMode);
         }
         return auditPublisher;
+    }
+
+    private synchronized KafkaAuditPublisher detachPublisher() {
+        KafkaAuditPublisher publisher = auditPublisher;
+        auditPublisher = null;
+        return publisher;
     }
 
     private static int resolveReplicationFactor() {
