@@ -1,5 +1,7 @@
 package company.vk.edu.distrib.compute;
 
+import company.vk.edu.distrib.compute.nst1610.Nst1610AuditServiceFactory;
+import company.vk.edu.distrib.compute.nst1610.Nst1610KVServiceFactory;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.extension.ExtensionContext;
@@ -15,7 +17,7 @@ import static org.junit.platform.commons.util.ReflectionUtils.newInstance;
 public class AuditServiceFactoryArgumentsProvider implements ArgumentsProvider {
     private final Set<ImmutablePair<Class<? extends KVServiceFactory>, Class<? extends AuditServiceFactory>>>
             factories = Set.of(
-    //        ImmutablePair.of(DummyKVServiceFactory.class, AuditServiceFactory.class)
+        ImmutablePair.of(Nst1610KVServiceFactory.class, Nst1610AuditServiceFactory.class)
     );
 
     @Override

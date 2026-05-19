@@ -2,6 +2,7 @@ package company.vk.edu.distrib.compute.nst1610.http;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
+import company.vk.edu.distrib.compute.AuditEvent;
 import company.vk.edu.distrib.compute.nst1610.replication.ReplicatedFileStorage;
 import company.vk.edu.distrib.compute.nst1610.sharding.HashingStrategy;
 import java.io.IOException;
@@ -19,17 +20,20 @@ public class EntityHandler implements HttpHandler {
     private final String localEndpoint;
     private final HashingStrategy strategy;
     private final ClusterProxy clusterProxy;
+    private final AuditSink auditSink;
 
     public EntityHandler(
         ReplicatedFileStorage replicatedStorage,
         String localEndpoint,
         HashingStrategy strategy,
-        ClusterProxy clusterProxy
+        ClusterProxy clusterProxy,
+        AuditSink auditSink
     ) {
         this.replicatedStorage = replicatedStorage;
         this.localEndpoint = localEndpoint;
         this.strategy = strategy;
         this.clusterProxy = clusterProxy;
+        this.auditSink = auditSink;
     }
 
     @Override
@@ -52,11 +56,15 @@ public class EntityHandler implements HttpHandler {
     }
 
     private void handleRequest(HttpExchange exchange) throws IOException {
+        long requestTimestamp = System.currentTimeMillis();
         String id = extractId(exchange.getRequestURI());
         int ack = extractAck(exchange.getRequestURI());
         if (id == null) {
             exchange.sendResponseHeaders(400, 0);
             return;
+        }
+        if (!isInternalProxyRequest(exchange)) {
+            auditSink.publish(new AuditEvent(exchange.getRequestMethod(), id, requestTimestamp));
         }
         if (ack <= 0 || ack > replicatedStorage.numberOfReplicas()) {
             exchange.sendResponseHeaders(400, 0);
@@ -124,6 +132,12 @@ public class EntityHandler implements HttpHandler {
         return "GET".equals(method) || "PUT".equals(method) || "DELETE".equals(method);
     }
 
+    private boolean isInternalProxyRequest(HttpExchange exchange) {
+        return "true".equalsIgnoreCase(
+            exchange.getRequestHeaders().getFirst(ClusterProxy.INTERNAL_PROXY_HEADER)
+        );
+    }
+
     private String extractId(URI uri) {
         String value = extractQueryParam(uri, "id");
         if (value == null || value.isEmpty()) {
@@ -153,5 +167,10 @@ public class EntityHandler implements HttpHandler {
             }
         }
         return null;
+    }
+
+    @FunctionalInterface
+    public interface AuditSink {
+        void publish(AuditEvent event);
     }
 }

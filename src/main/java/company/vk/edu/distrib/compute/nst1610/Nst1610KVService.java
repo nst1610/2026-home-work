@@ -1,8 +1,9 @@
 package company.vk.edu.distrib.compute.nst1610;
 
 import com.sun.net.httpserver.HttpServer;
-import company.vk.edu.distrib.compute.KVService;
+import company.vk.edu.distrib.compute.AuditableKVService;
 import company.vk.edu.distrib.compute.ReplicatedService;
+import company.vk.edu.distrib.compute.nst1610.audit.KafkaAuditPublisher;
 import company.vk.edu.distrib.compute.nst1610.http.ClusterProxy;
 import company.vk.edu.distrib.compute.nst1610.http.EntityHandler;
 import company.vk.edu.distrib.compute.nst1610.http.StatusHandler;
@@ -16,7 +17,7 @@ import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class Nst1610KVService implements KVService, ReplicatedService {
+public class Nst1610KVService implements AuditableKVService, ReplicatedService {
     private static final Logger log = LoggerFactory.getLogger(Nst1610KVService.class);
     private static final int DEFAULT_REPLICATION_FACTOR = 9;
     private static final String REPLICATION_FACTOR_ENV = "NST1610_REPLICATION_FACTOR";
@@ -27,6 +28,10 @@ public class Nst1610KVService implements KVService, ReplicatedService {
     private final HashingStrategy strategy;
     private final ClusterProxy clusterProxy;
     private final ReplicatedFileStorage replicatedStorage;
+
+    private volatile String bootstrapServers;
+    private volatile boolean asyncMode = true;
+    private KafkaAuditPublisher auditPublisher;
 
     public Nst1610KVService(int port) throws IOException {
         this(port, List.of(getEndpoint(port)), getEndpoint(port), resolveReplicationFactor());
@@ -53,7 +58,14 @@ public class Nst1610KVService implements KVService, ReplicatedService {
 
     private void initServer() {
         server.createContext("/v0/status", new StatusHandler());
-        server.createContext("/v0/entity", new EntityHandler(replicatedStorage, localEndpoint, strategy, clusterProxy));
+        server.createContext("/v0/entity", new EntityHandler(
+                replicatedStorage,
+                localEndpoint,
+                strategy,
+                clusterProxy,
+                event -> publisher().publish(event)
+            )
+        );
     }
 
     @Override
@@ -66,6 +78,11 @@ public class Nst1610KVService implements KVService, ReplicatedService {
     public void stop() {
         log.info("Server stop");
         server.stop(0);
+        KafkaAuditPublisher publisher = auditPublisher;
+        auditPublisher = null;
+        if (publisher != null) {
+            publisher.close();
+        }
     }
 
     private static String getEndpoint(int port) {
@@ -94,6 +111,32 @@ public class Nst1610KVService implements KVService, ReplicatedService {
     @Override
     public void enableReplica(int nodeId) {
         replicatedStorage.enableReplica(nodeId);
+    }
+
+    @Override
+    public void setBootstrapServers(String bootstrapServers) {
+        this.bootstrapServers = bootstrapServers;
+        KafkaAuditPublisher publisher = auditPublisher;
+        auditPublisher = null;
+        if (publisher != null) {
+            publisher.close();
+        }
+    }
+
+    @Override
+    public void setAsync(boolean enabled) {
+        this.asyncMode = enabled;
+        if (auditPublisher != null) {
+            auditPublisher.setAsyncMode(enabled);
+        }
+    }
+
+    private synchronized KafkaAuditPublisher publisher() {
+        if (auditPublisher == null) {
+            auditPublisher = new KafkaAuditPublisher(bootstrapServers);
+            auditPublisher.setAsyncMode(asyncMode);
+        }
+        return auditPublisher;
     }
 
     private static int resolveReplicationFactor() {

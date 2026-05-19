@@ -11,6 +11,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
 public class ClusterProxy {
+    public static final String INTERNAL_PROXY_HEADER = "X-Nst1610-Internal-Proxy";
+
     private final HttpClient httpClient = HttpClient.newHttpClient();
 
     public ProxyResponse forward(String endpoint, String id, int ack, HttpExchange exchange)
@@ -21,7 +23,8 @@ public class ClusterProxy {
                     + "/v0/entity?id=" + URLEncoder.encode(id, StandardCharsets.UTF_8)
                     + "&ack=" + ack
             ))
-            .timeout(Duration.ofSeconds(2));
+            .timeout(Duration.ofSeconds(2))
+            .header(INTERNAL_PROXY_HEADER, "true");
         switch (exchange.getRequestMethod()) {
             case "GET" -> requestBuilder.GET();
             case "PUT" -> requestBuilder.PUT(
