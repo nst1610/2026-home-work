@@ -15,6 +15,8 @@ import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -28,7 +30,7 @@ public class Nst1610KVService implements AuditableKVService, ReplicatedService {
     private final HashingStrategy strategy;
     private final ClusterProxy clusterProxy;
     private final ReplicatedFileStorage replicatedStorage;
-    private final Object auditPublisherLock = new Object();
+    private final Lock auditPublisherLock = new ReentrantLock();
     private String bootstrapServers;
     private boolean asyncMode = true;
     private Optional<KafkaAuditPublisher> auditPublisher = Optional.empty();
@@ -131,27 +133,36 @@ public class Nst1610KVService implements AuditableKVService, ReplicatedService {
     }
 
     private KafkaAuditPublisher publisher() {
-        synchronized (auditPublisherLock) {
+        auditPublisherLock.lock();
+        try {
             if (auditPublisher.isEmpty()) {
                 KafkaAuditPublisher createdPublisher = new KafkaAuditPublisher(bootstrapServers);
                 createdPublisher.setAsyncMode(asyncMode);
                 auditPublisher = Optional.of(createdPublisher);
             }
             return auditPublisher.orElseThrow();
+        } finally {
+            auditPublisherLock.unlock();
         }
     }
 
     private KafkaAuditPublisher currentPublisher() {
-        synchronized (auditPublisherLock) {
+        auditPublisherLock.lock();
+        try {
             return auditPublisher.orElse(null);
+        } finally {
+            auditPublisherLock.unlock();
         }
     }
 
     private KafkaAuditPublisher detachPublisher() {
-        synchronized (auditPublisherLock) {
+        auditPublisherLock.lock();
+        try {
             KafkaAuditPublisher publisher = auditPublisher.orElse(null);
             auditPublisher = Optional.empty();
             return publisher;
+        } finally {
+            auditPublisherLock.unlock();
         }
     }
 

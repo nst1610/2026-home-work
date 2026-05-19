@@ -18,7 +18,6 @@ public class KafkaAuditPublisher implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(KafkaAuditPublisher.class);
     private final String bootstrapServers;
     private final Lock producerLock = new ReentrantLock();
-    private final Object asyncModeLock = new Object();
     private boolean asyncMode = true;
     private Optional<KafkaProducer<String, String>> producerRef = Optional.empty();
 
@@ -27,8 +26,11 @@ public class KafkaAuditPublisher implements AutoCloseable {
     }
 
     public void setAsyncMode(boolean asyncMode) {
-        synchronized (asyncModeLock) {
+        producerLock.lock();
+        try {
             this.asyncMode = asyncMode;
+        } finally {
+            producerLock.unlock();
         }
     }
 
@@ -89,8 +91,11 @@ public class KafkaAuditPublisher implements AutoCloseable {
     }
 
     private boolean isAsyncMode() {
-        synchronized (asyncModeLock) {
+        producerLock.lock();
+        try {
             return asyncMode;
+        } finally {
+            producerLock.unlock();
         }
     }
 
