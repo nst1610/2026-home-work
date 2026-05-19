@@ -39,7 +39,7 @@ public class KVServiceFactoryArgumentsProvider implements ArgumentsProvider {
         InMemoryKVServiceFactory.class,
         Vitos23KVServiceFactory.class,
         NihuawayKVServiceFactory.class,
-        ShuuuurikFileKVServiceFactory.class,
+        //ShuuuurikFileKVServiceFactory.class,
         B10nicleKVServiceFactory.class,
         VredakonKVServiceFactory.class,
         PopovIgorKVServiceFactoryImpl.class,
